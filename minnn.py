@@ -46,12 +46,20 @@ class Tensor:
         return f"T{self.shape}: {self.data}"
 
     # accumulate grad
-    def accumulate_grad(self, g: xp.ndarray) -> None:
-        raise NotImplementedError
+    def accumulate_grad(self, g: xp.ndarray) :
+        if self.grad is not None:
+            self.grad += g
+        else:
+              self.grad = g
+    
 
     # accumulate grad sparsely; note: only for D2 lookup matrix!
-    def accumulate_grad_sparse(self, gs: List[Tuple[int, xp.ndarray]]) -> None:
-        raise NotImplementedError
+    def accumulate_grad_sparse(self, gs: List[Tuple[int, xp.ndarray]]):
+        if self.grad is None:
+            self.grad = xp.zeros_like(self.data)
+        for widx, arr in gs:
+                self.grad[widx] += arr
+    
 
     # get dense grad
     def get_dense_grad(self):
@@ -122,11 +130,11 @@ class Op:
 
     # forward the operation
     def forward(self, *args, **kwargs):
-        raise NotImplementedError()
+        return  ComputationGraph.get_cg().ops.forward(*args, **kwargs)
 
     # backward with the pre-stored tensors
     def backward(self):
-        raise NotImplementedError()
+        raise ComputationGraph.get_cg().ops.backward(*args, **kwargs)
 
 # computational graph
 class ComputationGraph:
@@ -162,8 +170,10 @@ class Initializer:
         return xp.full(shape, val)
 
     @staticmethod
+    #column of the W is the size of previous layer
     def xavier_uniform(shape: Sequence[int], gain=1.0):
-        raise NotImplementedError
+        limit= xp.sqrt(6/xp.sum(shape,axis=0))
+        return xp.random.uniform(-limit,limit,size=shape)
 
 # Model: collection of parameters
 class Model:
@@ -230,7 +240,37 @@ class SGDTrainer(Trainer):
 
 class MomentumTrainer(Trainer):
     def __init__(self, model: Model, lrate=0.1, mrate=0.99):
-        raise NotImplementedError
+        super().__init__(model)
+        self.lrate=lrate
+        self.mrate=mrate
+        self.velocity=[0 for i in range(len(self.model.params))]
+        
+
+    def update(self):
+        lrate=self.lrate
+        mrate=self.mrate
+
+        while len(self.model.params) > len( self.velocity):
+             self.velocity.append(0)
+      
+        for i,p in enumerate(self.model.params):
+            
+            if p.grad is not None:
+                if isinstance(p.grad,dict):
+                    self.update_sparse(p,p.grad,lrate,mrate,i)
+                else:
+                    self.update_dense(p,p.grad,lrate,mrate,i)
+            p.grad = None
+         
+
+    def update_dense(self, p: Parameter, g: xp.ndarray, lrate: float,mrate: float,i):
+            self.velocity[i] = self.velocity[i]*mrate + g*(1-mrate)
+            p.data -= lrate*self.velocity[i]
+
+    def update_sparse(self, p: Parameter, gs: Dict[int, xp.ndarray], lrate: float,mrate: float,i):
+        for widx, arr in gs.items():
+                self.velocity_sparse[widx] = self.velocity_sparse[widx]*mrate + arr*(1-mrate)
+                p.data[widx] -= lrate * self.velocity_sparse[widx]
 
 # --
 
@@ -266,8 +306,21 @@ def log_softmax(x: xp.ndarray, axis=-1):
 
 class OpLookup(Op):
     def __init__(self):
-        raise NotImplementedError
+         super().__init__()
 
+    def forward(self,emb:Tensor,wordVector:xp.ndarray):
+        wordEmb = emb.data[wordVector]
+        embTensor= Tensor(wordEmb)
+        self.store_ctx(emb=emb, embTensor=embTensor, wordVector=wordVector)
+        return embTensor
+
+    def backward(self):
+         emb, embTensor, wordVector = self.get_ctx('emb', 'embTensor', 'wordVector')
+         if embTensor.grad is not None:
+             g=xp.zeros(emb.shape)
+             for i,grad in zip(wordVector,embTensor.grad):
+                 g[i]+=grad
+             emb.accumulate_grad(g)
 class OpSum(Op):
     def __init__(self):
         super().__init__()
@@ -290,11 +343,49 @@ class OpSum(Op):
 
 class OpDot(Op):
     def __init__(self):
-        raise NotImplementedError
+        super().__init__()
+
+    def forward(self,w,h):
+        mult=xp.matmul(w.data,h.data)
+        t_mult=Tensor(mult)
+        self.store_ctx(w=w, t_mult=t_mult,h=h)
+        return t_mult
+
+    def backward(self):
+        w, t_mult, h = self.get_ctx('w', 't_mult', 'h')
+        if t_mult.grad is not None: 
+             w_grad=xp.zeros(w.data.shape)
+             h_grad=xp.zeros(h.data.shape)
+
+             for i in range(w.data.shape[0]):
+                 w_grad[i] = xp.multiply(t_mult.grad[i],h.data)
+            
+             #for i in range(h.data.shape[0]):
+             h_grad=xp.matmul(t_mult.grad,w.data)
+
+             w.accumulate_grad(w_grad)
+             h.accumulate_grad(h_grad)
+
+
+
+
 
 class OpTanh(Op):
     def __init__(self):
-        raise NotImplementedError
+        super().__init__()
+    
+    def forward(self,x):
+        v=xp.tanh(x.data)
+        v_t=Tensor(v)
+        self.store_ctx(x=x,v_t=v_t)
+        return v_t
+    
+    def backward(self):
+         x,v_t= self.get_ctx('x','v_t')
+         if v_t.grad is not None: 
+            g=v_t.grad*(1 - xp.tanh(x.data)**2)
+            x.accumulate_grad(g)
+
 
 class OpRelu(Op):
     def __init__(self):

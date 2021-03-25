@@ -69,12 +69,15 @@ def test_momentum_update(test_mn):
         g = np.array([1.,1.])
         p1.accumulate_grad(g)
         t1.update()
+    
     assert is_allclose(p1.data, np.array([-0.131441, -0.131441])), \
         "This is the values using our implementation, there can be other versions for momentum_update, you can choose to use others!"
     for i in range(6):
         g = np.array([1.,1.])
         p2.accumulate_grad_sparse([((i%2), g.copy())])
         t1.update()
+    
+    #print(p2.data)
     assert is_allclose(p2.data, np.array([[-0.1002459, -0.1002459], [-0.078051, -0.078051]])), \
         "This is the values using our implementation, there can be other versions for momentum_update, you can choose to use others!"
     # --
@@ -141,3 +144,4 @@ if __name__ == '__main__':
     # main("minnn.py")
     import sys
     main(*sys.argv[1:])
+   
