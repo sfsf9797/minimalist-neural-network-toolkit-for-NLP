@@ -2,7 +2,7 @@ This my solution for assignment 1 for course [CS11-747: Neural Networks for NLP]
 
 I am truly appreciated the efforts of Graham Neubig, Zhisong Zhang, and Divyansh Kaushik for making this course available to public and also preparing this amazing assignment which I've learnt a lot.
 
-[The original github repository](https://github.com/sfsf9797/minimalist-neural-network-toolkit-for-NLP)
+[The original github repository](https://github.com/neubig/minnn-assignment)
 
 
 
